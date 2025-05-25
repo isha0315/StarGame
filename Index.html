@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Catch the Falling Stars - Updated</title>
+<style>
+  body {
+    margin: 0;
+    padding: 20px;
+    background: radial-gradient(#001122, #000);
+    color: white;
+    font-family: Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+    flex-direction: column;
+  }
+  .game-container {
+    text-align: center;
+    position: relative;
+  }
+  #gameCanvas {
+    border: 2px solid #444;
+    background: linear-gradient(to bottom, #001122, #003366);
+    touch-action: none;
+  }
+  .ui {
+    display: flex;
+    justify-content: space-between;
+    width: 800px;
+    margin-bottom: 10px;
+    font-size: 18px;
+    font-weight: bold;
+  }
+  .instructions {
+    margin-top: 15px;
+    font-size: 14px;
+    color: #aaa;
+  }
+  .game-over {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.85);
+    padding: 30px;
+    border-radius: 10px;
+    text-align: center;
+    display: none;
+    width: 320px;
+  }
+  button, .share-btn {
+    padding: 10px 20px;
+    font-size: 16px;
+    background: #0066cc;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin: 5px;
+  }
+  button:hover, .share-btn:hover {
+    background: #0088ff;
+  }
+  #musicToggle {
+    margin-bottom: 10px;
+  }
+  /* Touch controls for mobile */
+  .touch-controls {
+    margin-top: 10px;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+  }
+  .touch-controls button {
+    font-size: 22px;
+    padding: 15px 25px;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+<div class="game-container">
+  <div class="ui">
+    <div>Score: <span id="score">0</span></div>
+    <div>Time: <span id="timer">60</span>s</div>
+    <div>High Score: <span id="highScore">0</span></div>
+  </div>
+
+  <button id="musicToggle">Mute Music 🔊</button>
+
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <div class="touch-controls">
+    <button id="leftBtn">◀️</button>
+    <button id="rightBtn">▶️</button>
+  </div>
+
+  <div class="instructions">
+    Use ← → arrow keys or buttons below to move the basket and catch falling stars!
+  </div>
+
+  <div class="game-over" id="gameOver">
+    <h2>Game Over!</h2>
+    <p>Final Score: <span id="finalScore">0</span></p>
+    <p id="newHighScore" style="display: none; color: #ffdd00;">New High Score!</p>
+    <button onclick="startGame()">Play Again</button>
+    <div style="margin-top: 15px;">
+      <span>Share your score:</span><br />
+      <button class="share-btn" id="shareInstagram">Instagram</button>
+      <button class="share-btn" id="shareSnapchat">Snapchat</button>
+      <button class="share-btn" id="shareWhatsapp">WhatsApp</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let gameRunning = false;
+let score = 0;
+let timeLeft = 60;
+let highScore = parseInt(localStorage.getItem('starCatcherHighScore') || '0');
+let gameSpeed = 1;
+let lastSpeedIncrease = 0;
+let basket = { x: 375, y: 550, width: 80, height: 40 };
+let stars = [];
+let keys = {};
+let lastTime = 0;
+let starSpawnTimer = 0;
+let gameTimer = 0;
+let particles = [];
+
+const music = new Audio('https://cdn.pixabay.com/download/audio/2022/03/15/audio_8d8128671f.mp3?filename=relaxing-music-ambient-background-11263.mp3');
+music.loop = true;
+let musicMuted = false;
+
+// Music toggle button
+const musicToggleBtn = document.getElementById('musicToggle');
+musicToggleBtn.onclick = () => {
+  musicMuted = !musicMuted;
+  if (musicMuted) {
+    music.pause();
+    musicToggleBtn.textContent = 'Unmute Music 🔇';
+  } else {
+    music.play();
+    musicToggleBtn.textContent = 'Mute Music 🔊';
+  }
+};
+
+// Start music automatically when user interacts (due to browser autoplay policy)
+window.addEventListener('click', () => {
+  if (!musicMuted && music.paused) music.play();
+}, { once: true });
+
+// Basket drawing: typical basket shape (arc + handle)
+function drawBasket() {
+  const x = basket.x + basket.width / 2;
+  const y = basket.y + basket.height / 2 + 10;
+
+  ctx.fillStyle = '#8B4513';
+  ctx.strokeStyle = '#654321';
+  ctx.lineWidth = 3;
+
+  ctx.beginPath();
+  // Basket base: a half ellipse
+  ctx.ellipse(x, y, basket.width / 2, basket.height / 2, 0, 0, Math.PI);
+  ctx.fill();
+  ctx.stroke();
+
+  // Basket handle
+  ctx.beginPath();
+  ctx.arc(x, basket.y + 10, basket.width / 2 - 10, Math.PI, 2 * Math.PI);
+  ctx.stroke();
+}
+
+// Star creation and drawing (same as before)
+function createStar(x, y) {
+  const colors = ['#ffdd00', '#00ffff', '#ff4444'];
+  const color = colors[Math.floor(Math.random() * colors.length)];
+  return {
+    x, y,
+    width: 20,
+    height: 20,
+    speed: 2 * gameSpeed,
+    color,
+    points: [
+      { x: 0, y: -10 }, { x: 3, y: -3 }, { x: 10, y: -3 }, { x: 5, y: 2 },
+      { x: 6, y: 9 }, { x: 0, y: 5 }, { x: -6, y: 9 }, { x: -5, y: 2 },
+      { x: -10, y: -3 }, { x: -3, y: -3 }
+    ]
+  };
+}
+
+function drawStar(star) {
+  ctx.save();
+  ctx.translate(star.x + 10, star.y + 10);
+  ctx.fillStyle = star.color;
+  ctx.beginPath();
+  ctx.moveTo(star.points[0].x, star.points[0].y);
+  for (let i = 1; i < star.points.length; i++) {
+    ctx.lineTo(star.points[i].x, star.points[i].y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function handleInput() {
+  if (keys['ArrowLeft'] && basket.x > 0) basket.x -= 8;
+  if (keys['ArrowRight'] && basket.x < canvas.width - basket.width) basket.x += 8;
+}
+
+function spawnStar() {
+  stars.push(createStar(Math.random() * (canvas.width - 20), -20));
+}
+
+function spawnParticles(x, y, color) {
+  for (let i = 0; i < 10; i++) {
+    particles.push({ x, y, dx: Math.random() * 2 - 1, dy: Math.random() * -2, life: 30, color });
+  }
+}
+
+function updateParticles() {
+  particles.forEach(p => {
+    p.x += p.dx;
+    p.y += p.dy;
+    p.dy += 0.1;
+    p.life--;
+  });
+  particles = particles.filter(p => p.life > 0);
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = p.life / 30;
+    ctx.fillRect(p.x, p.y, 2, 2);
+    ctx.globalAlpha = 1;
+  });
+}
+
+function updateStars(deltaTime) {
+  for (let i = stars.length - 1; i >= 0; i--) {
+    const star = stars[i];
+    star.y += star.speed;
+
+    // Collision detection with basket (simple box collision)
+    if (
+      star.x < basket.x + basket.width &&
+      star.x + star.width > basket.x &&
+      star.y < basket.y + basket.height &&
+      star.y + star.height > basket.y
+    ) {
+      score++;
+      spawnParticles(star.x + 10, star.y + 10, star.color);
+      playCatchSound();
+      stars.splice(i, 1);
+      continue;
+    }
+
+    if (star.y > canvas.height) stars.splice(i, 1);
+  }
+}
+
+function playCatchSound() {
+  const audio = new Audio('https://freesound.org/data/previews/66/66717_931655-lq.mp3');
+  audio.play();
+}
+
+function updateDifficulty() {
+  if (Math.floor((60 - timeLeft) / 15) > lastSpeedIncrease) {
+    gameSpeed += 0.5;
+    lastSpeedIncrease = Math.floor((60 - timeLeft) / 15);
+    stars.forEach(star => star.speed = 2 * gameSpeed);
+  }
+}
+
+function updateTimer(deltaTime) {
+  gameTimer += deltaTime;
+  if (gameTimer >= 1000) {
+    timeLeft--;
+    gameTimer = 0;
+    if (timeLeft <= 0) endGame();
+  }
+}
+
+function gameLoop(currentTime) {
+  if (!gameRunning) return;
+  const deltaTime = currentTime - lastTime;
+  lastTime = currentTime;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  handleInput();
+
+  starSpawnTimer += deltaTime;
+  if (starSpawnTimer > 800 / gameSpeed) {
+    spawnStar();
+    starSpawnTimer = 0;
+  }
+
+  updateStars(deltaTime);
+  updateParticles();
+  updateDifficulty();
+  updateTimer(deltaTime);
+
+  drawBasket();
+  stars.forEach(drawStar);
+  drawParticles();
+
+  document.getElementById('score').textContent = score;
+  document.getElementById('timer').textContent = timeLeft;
+  document.getElementById('highScore').textContent = highScore;
+
+  requestAnimationFrame(gameLoop);
+}
+
+function endGame() {
+  gameRunning = false;
+  music.pause();
+
+  const gameOverScreen = document.getElementById('gameOver');
+  document.getElementById('finalScore').textContent = score;
+
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('starCatcherHighScore', highScore);
+    document.getElementById('newHighScore').style.display = 'block';
+  } else {
+    document.getElementById('newHighScore').style.display = 'none';
+  }
+
+  gameOverScreen.style.display = 'block';
+}
+
+// Keyboard events
+window.addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+});
+window.addEventListener('keyup', (e) => {
+  keys[e.key] = false;
+});
+
+// Touch buttons
+document.getElementById('leftBtn').addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  keys['ArrowLeft'] = true;
+});
+document.getElementById('leftBtn').addEventListener('touchend', (e) => {
+  e.preventDefault();
+  keys['ArrowLeft'] = false;
+});
+document.getElementById('rightBtn').addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  keys['ArrowRight'] = true;
+});
+document.getElementById('rightBtn').addEventListener('touchend', (e) => {
+  e.preventDefault();
+  keys['ArrowRight'] = false;
+});
+
+// Share buttons logic
+document.getElementById('shareInstagram').onclick = () => {
+  alert('Instagram does not support direct score sharing via web. You can share your score manually!');
+  // Alternatively, open Instagram app homepage (if installed)
+  window.open('https://www.instagram.com/', '_blank');
+};
+document.getElementById('shareSnapchat').onclick = () => {
+  alert('Snapchat does not support direct score sharing via web. You can share your score manually!');
+  // Alternatively, open Snapchat homepage
+  window.open('https://www.snapchat.com/', '_blank');
+};
+document.getElementById('shareWhatsapp').onclick = () => {
+  const message = encodeURIComponent(`I scored ${score} points in Catch the Falling Stars! Try it out!`);
+  window.open(`https://api.whatsapp.com/send?text=${message}`, '_blank');
+};
+
+function startGame() {
+  score = 0;
+  timeLeft = 60;
+  stars = [];
+  gameSpeed = 1;
+  lastSpeedIncrease = 0;
+  gameTimer = 0;
+  particles = [];
+  basket.x = canvas.width / 2 - basket.width / 2;
+  document.getElementById('gameOver').style.display = 'none';
+  gameRunning = true;
+  lastTime = performance.now();
+  if (!musicMuted) music.play();
+  requestAnimationFrame(gameLoop);
+}
+
+// Start the game initially
+startGame();
+</script>
+</body>
+</html>
