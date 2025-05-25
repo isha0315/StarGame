@@ -1,7 +1,5 @@
 # StarGame
-Sure! Here's a clear, friendly, and concise description you can use for your GitHub project readme or repo description:
 
----
 
 # Catch the Falling Stars Game
 
